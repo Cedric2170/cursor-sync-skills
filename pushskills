@@ -4,18 +4,24 @@ set -euo pipefail
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
 BRANCH="${SKILLS_BRANCH:-main}"
 CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
+# Par defaut: rsync --delete pour que les suppressions dans ~/.cursor se reflètent dans le clone et dans Git.
+# Mettre CURSOR_SKILLS_RSYNC_NO_DELETE=1 pour ne jamais effacer dans ~/.skills-sync des chemins absents de ~/.cursor.
+RSYNC_EXTRA=()
+if [[ "${CURSOR_SKILLS_RSYNC_NO_DELETE:-0}" != "1" ]]; then
+  RSYNC_EXTRA=(--delete)
+fi
 
 if [[ ! -d "$SYNC_DIR/.git" ]]; then
   echo "Depot skills introuvable: $SYNC_DIR — lancez install_host.sh"
   exit 1
 fi
 
-# Repertoires fusionnes: copier ~/.cursor -> skills-sync avant commit (sans --delete dans le depot)
+# Repertoires fusionnes: copier ~/.cursor -> skills-sync avant commit (--delete sauf opt-out)
 sync_cursor_to_repo() {
   local c="$1" s="$2"
   if [[ -d "$c" ]]; then
     mkdir -p "$s"
-    rsync -a "$c/" "$s/"
+    rsync -a "${RSYNC_EXTRA[@]}" "$c/" "$s/"
     if [[ "${PUSHSKILLS_VERBOSE:-0}" == 1 ]]; then
       local n
       n="$(find "$c" -type f 2>/dev/null | wc -l | tr -d ' ')"
@@ -59,13 +65,18 @@ if [[ -n "$porcelain" ]]; then
   git -C "$SYNC_DIR" commit -m "$msg"
 fi
 
-# Pousse aussi les commits deja locaux (avant, on sortait sans push quand il n'y avait pas de nouveau commit)
-git -C "$SYNC_DIR" push origin "HEAD:${BRANCH}"
+head_short="$(git -C "$SYNC_DIR" rev-parse --short HEAD)"
+origin_url="$(git -C "$SYNC_DIR" remote get-url origin 2>/dev/null || echo "origin")"
+
+# Pousse aussi les commits deja locaux (--progress: sortie meme si stderr n'est pas un terminal)
+echo "pushskills: envoi git vers origin/${BRANCH} (HEAD ${head_short})..."
+echo "  distant: ${origin_url}"
+git -C "$SYNC_DIR" push --progress origin "HEAD:${BRANCH}"
 
 if [[ -n "$msg" ]]; then
-  echo "pushskills OK: $msg"
+  echo "pushskills OK — commit cree et pousse: ${msg} (branche ${BRANCH}, ${head_short})."
 else
-  echo "pushskills OK (aucun nouveau commit — arbre deja aligne avec le dernier commit apres copie)."
+  echo "pushskills OK — push effectue vers GitLab (branche ${BRANCH}, ${head_short}); pas de nouveau commit local cette fois."
   if [[ "${PUSHSKILLS_VERBOSE:-0}" == 1 ]]; then
     echo "pushskills [verbose]: CURSOR_DIR=$(printf '%q' "$CURSOR_DIR") SYNC_DIR=$(printf '%q' "$SYNC_DIR")" >&2
   fi

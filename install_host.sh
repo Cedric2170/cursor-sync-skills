@@ -2,18 +2,21 @@
 set -euo pipefail
 
 # Installe pullskills/pushskills, clone ~/.skills-sync si besoin, et synchronise ~/.cursor.
-# skills, rules, subagent, hooks: repertoires reels fusionnes avec skills-sync (rsync sans --delete;
-# jamais rm -rf sur les dossiers Cursor — les fichiers uniquement locaux sont conserves).
+# Installation: fusion uniquement additive (rsync sans --delete) — rien n’est efface sous ~/.cursor.
+# Ensuite, pullskills / pushskills appliquent les mises a jour et suppressions (--delete par defaut).
+# CURSOR_SKILLS_RSYNC_NO_DELETE=1 sur pull/push pour ne jamais effacer cote ~/.cursor ou ~/.skills-sync.
 #   ./install_host.sh
 #
 #   SKILLS_ORIGIN_URL           defaut: git@gitlab.com:point-digital/ia-skills/skills.git
 #   CURSOR_SKILLS_SYNC_DIR      defaut: $HOME/.skills-sync
+#   SKILLS_BRANCH               defaut: main (pull en debut d’install si clone existant)
 #   CURSOR_DIR                  defaut: $HOME/.cursor
 #   CURSOR_PURGE_OLD_CURSOR_GIT=1   supprime ~/.cursor/.git sans autre confirmation
 #   SHELL_RC                    ex: ~/.bashrc
 
 CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
+SKILLS_BRANCH="${SKILLS_BRANCH:-main}"
 SKILLS_ORIGIN_URL="${SKILLS_ORIGIN_URL:-git@gitlab.com:point-digital/ia-skills/skills.git}"
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 SELF_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd)"
@@ -54,7 +57,19 @@ ensure_skill_tree() {
   mkdir -p "$SYNC_DIR/skills" "$SYNC_DIR/roles" "$SYNC_DIR/subagent" "$SYNC_DIR/hooks"
 }
 
-# Fusionne un repertoire ~/.cursor avec le clone Git: aucun --delete, pas de remplacement par lien seul.
+# Met le clone a jour avant la fusion additive (sans rsync --delete sur ~/.cursor).
+pull_origin_before_merge() {
+  if [[ ! -d "$SYNC_DIR/.git" ]]; then
+    return 0
+  fi
+  if git -C "$SYNC_DIR" pull --rebase --autostash origin "$SKILLS_BRANCH"; then
+    echo "install: depot a jour (origin/$SKILLS_BRANCH)."
+  else
+    echo "Avertissement: git pull a echoue dans $SYNC_DIR — corrigez puis relancez install ou pullskills." >&2
+  fi
+}
+
+# Fusionne ~/.cursor avec le clone Git, sans --delete (ajouts / mises a jour seulement).
 # host_dir: ex. ~/.cursor/skills ; sync_dir: ex. ~/.skills-sync/skills (rules <-> roles).
 install_cursor_merge() {
   local host_dir="$1"
@@ -166,8 +181,10 @@ install_scripts
 purge_old_cursor_git
 ensure_sync_clone
 ensure_skill_tree
+pull_origin_before_merge
 install_links
 commit_migration_if_needed
 configure_shell_aliases
 
 echo "OK install: SYNC_DIR=$SYNC_DIR CURSOR_DIR=$CURSOR_DIR"
+echo "  Suite: pullskills pour aligner ~/.cursor sur le depôt (y compris suppressions); pushskills pour publier."
