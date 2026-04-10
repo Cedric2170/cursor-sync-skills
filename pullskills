@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
+BRANCH="${SKILLS_BRANCH:-main}"
+
+if [[ ! -d "$SYNC_DIR/.git" ]]; then
+  echo "Depot skills introuvable: $SYNC_DIR — lancez install_host.sh"
+  exit 1
+fi
+
+git -C "$SYNC_DIR" fetch origin
+git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"
+echo "pullskills OK ($BRANCH)"
