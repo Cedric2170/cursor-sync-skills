@@ -36,16 +36,19 @@ git -C "$SYNC_DIR" add -A
 
 # --porcelain=v1 reflete correctement les ajouts (git diff --staged --quiet peut laisser passer des cas)
 porcelain="$(git -C "$SYNC_DIR" status --porcelain=v1)"
-# Fichiers presents sur le disque mais exclus de l'index (git add -A ne les prend pas)
-ignored="$(
-  git -C "$SYNC_DIR" ls-files -o -i --exclude-standard -- skills roles subagent hooks 2>/dev/null | head -50 || true
+# Fichiers presents sur le disque mais exclus de l'index — avertir seulement si ce n'est pas du bruit systeme (.DS_Store, etc.)
+ignored_raw="$(
+  git -C "$SYNC_DIR" ls-files -o -i --exclude-standard -- skills roles subagent hooks 2>/dev/null || true
 )"
+ignored_warn="$(echo "$ignored_raw" | grep -Ev '(^|/)(\.DS_Store|Thumbs\.db|desktop\.ini)$|\.(swp|tmp)$|~$' | head -50 || true)"
 
-if [[ -n "$ignored" ]]; then
+if [[ -n "$ignored_warn" ]]; then
   echo "Avertissement: fichiers ignores par Git sous skills/, roles/, subagent/ ou hooks/ — ils ne seront pas commites." >&2
-  echo "$ignored" | head -15 | sed 's/^/  /' >&2
+  echo "$ignored_warn" | head -15 | sed 's/^/  /' >&2
   echo "  Verifiez .gitignore et la config globale (ex. core.excludesfile)." >&2
   echo "  Diagnostic: PUSHSKILLS_VERBOSE=1 pushskills" >&2
+elif [[ "${PUSHSKILLS_VERBOSE:-0}" == 1 && -n "$ignored_raw" ]]; then
+  echo "pushskills [verbose]: fichiers ignores uniquement \"bruit\" systeme (.DS_Store, etc.) — rien a signaler." >&2
 fi
 
 msg=""
