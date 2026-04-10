@@ -15,6 +15,7 @@ SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
 SKILLS_ORIGIN_URL="${SKILLS_ORIGIN_URL:-git@gitlab.com:point-digital/ia-skills/skills.git}"
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 SELF_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd)"
+MIGRATION_DONE=0
 
 MARK_BEGIN="# >>> cursor-skills-sync >>>"
 MARK_END="# <<< cursor-skills-sync <<<"
@@ -51,30 +52,69 @@ ensure_skill_tree() {
   mkdir -p "$SYNC_DIR/skills" "$SYNC_DIR/roles" "$SYNC_DIR/subagent" "$SYNC_DIR/hooks"
 }
 
-symlink_ok() {
+# Fusionne un repertoire (ou un lien vers repertoire) local vers target puis cree le lien.
+# Le contenu est preserve dans le clone Git (working tree); rien n'est supprime avant copie reussie.
+migrate_and_link() {
   local target="$1" linkpath="$2"
-  if [[ -L "$linkpath" ]]; then
-    local cur
-    cur="$(readlink "$linkpath")"
-    if [[ "$cur" == "$target" ]]; then
+  mkdir -p "$target"
+  local target_abs
+  target_abs="$(cd "$target" && pwd)"
+
+  if [[ -e "$linkpath" ]]; then
+    local current_abs=""
+    if [[ -d "$linkpath" ]]; then
+      current_abs="$(cd "$linkpath" && pwd)"
+    fi
+    if [[ -n "$current_abs" && "$current_abs" == "$target_abs" ]]; then
       return 0
     fi
-    echo "Erreur: $linkpath pointe vers $cur (attendu: $target)."
-    exit 1
-  fi
-  if [[ -e "$linkpath" ]]; then
-    echo "Erreur: $linkpath existe et n'est pas le lien attendu. Deplacez-le puis relancez."
-    exit 1
+    if [[ -L "$linkpath" ]]; then
+      if [[ ! -d "$linkpath" ]]; then
+        echo "Erreur: $linkpath est un lien symbolique qui ne pointe pas vers un repertoire."
+        exit 1
+      fi
+      echo "Migration: contenu de $linkpath (lien) copie vers $target"
+      rsync -a "${linkpath}/" "${target}/"
+      rm -f "$linkpath"
+      MIGRATION_DONE=1
+    elif [[ -d "$linkpath" ]]; then
+      echo "Migration: contenu de $linkpath copie vers $target"
+      rsync -a "${linkpath}/" "${target}/"
+      rm -rf "$linkpath"
+      MIGRATION_DONE=1
+    else
+      echo "Erreur: $linkpath existe et n'est pas un repertoire. Deplacez-le puis relancez."
+      exit 1
+    fi
   fi
   ln -s "$target" "$linkpath"
 }
 
 install_links() {
   mkdir -p "$CURSOR_DIR"
-  symlink_ok "$SYNC_DIR/skills" "$CURSOR_DIR/skills"
-  symlink_ok "$SYNC_DIR/roles" "$CURSOR_DIR/rules"
-  symlink_ok "$SYNC_DIR/subagent" "$CURSOR_DIR/subagent"
-  symlink_ok "$SYNC_DIR/hooks" "$CURSOR_DIR/hooks"
+  migrate_and_link "$SYNC_DIR/skills" "$CURSOR_DIR/skills"
+  migrate_and_link "$SYNC_DIR/roles" "$CURSOR_DIR/rules"
+  migrate_and_link "$SYNC_DIR/subagent" "$CURSOR_DIR/subagent"
+  migrate_and_link "$SYNC_DIR/hooks" "$CURSOR_DIR/hooks"
+}
+
+commit_migration_if_needed() {
+  if [[ "$MIGRATION_DONE" != "1" ]]; then
+    return 0
+  fi
+  if [[ ! -d "$SYNC_DIR/.git" ]]; then
+    return 0
+  fi
+  git -C "$SYNC_DIR" add -A
+  if git -C "$SYNC_DIR" diff --staged --quiet; then
+    echo "Migration: rien de nouveau a commiter (deja a jour)."
+    return 0
+  fi
+  local host
+  host="$(hostname -s 2>/dev/null || hostname)"
+  host="${host//[^a-zA-Z0-9._-]/_}"
+  git -C "$SYNC_DIR" commit -m "${host}-install_host-migration-locals"
+  echo "Migration enregistree dans Git (commit local). Envoyez avec: pushskills"
 }
 
 install_scripts() {
@@ -109,10 +149,18 @@ configure_shell_aliases() {
 
   tmp="$(mktemp)"
   awk '
-    $0 ~ /^alias pullskills=/ { next }
-    $0 ~ /^alias pushskills=/ { next }
-    $0 ~ /^alias pullscript=/ { next }
-    $0 ~ /^alias pushskiil=/ { next }
+    # Anciens alias (avec espaces possibles) + fautes de frappe ; re-ajoutes dans le bloc marque.
+    /^[[:space:]]*alias[[:space:]]+pullskills=/ { next }
+    /^[[:space:]]*alias[[:space:]]+pushskills=/ { next }
+    /^[[:space:]]*alias[[:space:]]+pullscript=/ { next }
+    /^[[:space:]]*alias[[:space:]]+pushskiil=/ { next }
+    # Ancien depot ~/.cursor : scripts nommes pullscripts-*/pushscripts-*
+    /^[[:space:]]*alias[[:space:]]+pullscripts-master=/ { next }
+    /^[[:space:]]*alias[[:space:]]+pushscripts-master=/ { next }
+    /^[[:space:]]*alias[[:space:]]+pullscripts-slave=/ { next }
+    /^[[:space:]]*alias[[:space:]]+pushscripts-slave=/ { next }
+    # Tout alias qui pointe encore vers ces fichiers (ex. pullskills -> pushscripts-master)
+    /^[[:space:]]*alias[[:space:]]+/ && $0 ~ /\/\.cursor\/scripts\/(push|pull)scripts-(master|slave)/ { next }
     { print }
   ' "$rc" > "$tmp"
   mv "$tmp" "$rc"
@@ -123,7 +171,9 @@ alias pullskills="\$HOME/.cursor/scripts/pullskills"
 alias pushskills="\$HOME/.cursor/scripts/pushskills"
 $MARK_END
 EOF
-  echo "Shell mis a jour: $rc (source $rc ou rouvrez un terminal)"
+  echo "Shell mis a jour: $rc"
+  echo "  Ouvrez un nouveau terminal ou: source $(printf '%q' "$rc")"
+  echo "  (les alias pullskills/pushskills en memoire pointaient peut-etre encore vers pushscripts-master.)"
 }
 
 install_scripts
@@ -131,6 +181,7 @@ purge_old_cursor_git
 ensure_sync_clone
 ensure_skill_tree
 install_links
+commit_migration_if_needed
 configure_shell_aliases
 
 echo "OK install: SYNC_DIR=$SYNC_DIR CURSOR_DIR=$CURSOR_DIR"
