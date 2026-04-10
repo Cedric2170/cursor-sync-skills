@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installe pullskills/pushskills, clone ~/.skills-sync si besoin, liens ~/.cursor.
+# Installe pullskills/pushskills, clone ~/.skills-sync si besoin, et synchronise ~/.cursor.
+# skills, rules, subagent, hooks: repertoires reels fusionnes avec skills-sync (rsync sans --delete;
+# jamais rm -rf sur les dossiers Cursor — les fichiers uniquement locaux sont conserves).
 #   ./install_host.sh
 #
 #   SKILLS_ORIGIN_URL           defaut: git@gitlab.com:point-digital/ia-skills/skills.git
@@ -52,50 +54,34 @@ ensure_skill_tree() {
   mkdir -p "$SYNC_DIR/skills" "$SYNC_DIR/roles" "$SYNC_DIR/subagent" "$SYNC_DIR/hooks"
 }
 
-# Fusionne un repertoire (ou un lien vers repertoire) local vers target puis cree le lien.
-# Le contenu est preserve dans le clone Git (working tree); rien n'est supprime avant copie reussie.
-migrate_and_link() {
-  local target="$1" linkpath="$2"
-  mkdir -p "$target"
-  local target_abs
-  target_abs="$(cd "$target" && pwd)"
-
-  if [[ -e "$linkpath" ]]; then
-    local current_abs=""
-    if [[ -d "$linkpath" ]]; then
-      current_abs="$(cd "$linkpath" && pwd)"
-    fi
-    if [[ -n "$current_abs" && "$current_abs" == "$target_abs" ]]; then
-      return 0
-    fi
-    if [[ -L "$linkpath" ]]; then
-      if [[ ! -d "$linkpath" ]]; then
-        echo "Erreur: $linkpath est un lien symbolique qui ne pointe pas vers un repertoire."
-        exit 1
-      fi
-      echo "Migration: contenu de $linkpath (lien) copie vers $target"
-      rsync -a "${linkpath}/" "${target}/"
-      rm -f "$linkpath"
-      MIGRATION_DONE=1
-    elif [[ -d "$linkpath" ]]; then
-      echo "Migration: contenu de $linkpath copie vers $target"
-      rsync -a "${linkpath}/" "${target}/"
-      rm -rf "$linkpath"
-      MIGRATION_DONE=1
-    else
-      echo "Erreur: $linkpath existe et n'est pas un repertoire. Deplacez-le puis relancez."
+# Fusionne un repertoire ~/.cursor avec le clone Git: aucun --delete, pas de remplacement par lien seul.
+# host_dir: ex. ~/.cursor/skills ; sync_dir: ex. ~/.skills-sync/skills (rules <-> roles).
+install_cursor_merge() {
+  local host_dir="$1"
+  local sync_dir="$2"
+  mkdir -p "$sync_dir"
+  if [[ -e "$host_dir" ]]; then
+    if [[ ! -d "$host_dir" ]]; then
+      echo "Erreur: $host_dir existe et n'est pas un repertoire (ni lien vers repertoire)."
       exit 1
     fi
+    rsync -a "$host_dir/" "$sync_dir/"
   fi
-  ln -s "$target" "$linkpath"
+  if [[ -L "$host_dir" ]]; then
+    echo "Migration: $host_dir etait un lien — remplace par un repertoire (fusion avec $sync_dir)."
+    rm -f "$host_dir"
+    MIGRATION_DONE=1
+  fi
+  mkdir -p "$host_dir"
+  rsync -a "$sync_dir/" "$host_dir/"
 }
 
 install_links() {
   mkdir -p "$CURSOR_DIR"
-  migrate_and_link "$SYNC_DIR/skills" "$CURSOR_DIR/skills"
-  migrate_and_link "$SYNC_DIR/roles" "$CURSOR_DIR/rules"
-  migrate_and_link "$SYNC_DIR/subagent" "$CURSOR_DIR/subagent"
-  migrate_and_link "$SYNC_DIR/hooks" "$CURSOR_DIR/hooks"
+  install_cursor_merge "$CURSOR_DIR/skills" "$SYNC_DIR/skills"
+  install_cursor_merge "$CURSOR_DIR/rules" "$SYNC_DIR/roles"
+  install_cursor_merge "$CURSOR_DIR/subagent" "$SYNC_DIR/subagent"
+  install_cursor_merge "$CURSOR_DIR/hooks" "$SYNC_DIR/hooks"
 }
 
 commit_migration_if_needed() {

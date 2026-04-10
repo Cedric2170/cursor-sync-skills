@@ -3,11 +3,25 @@ set -euo pipefail
 
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
 BRANCH="${SKILLS_BRANCH:-main}"
+CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
 
 if [[ ! -d "$SYNC_DIR/.git" ]]; then
   echo "Depot skills introuvable: $SYNC_DIR — lancez install_host.sh"
   exit 1
 fi
+
+# Repertoires fusionnes: copier ~/.cursor -> skills-sync avant commit (sans --delete dans le depot)
+sync_cursor_to_repo() {
+  local c="$1" s="$2"
+  if [[ -d "$c" ]]; then
+    mkdir -p "$s"
+    rsync -a "$c/" "$s/"
+  fi
+}
+sync_cursor_to_repo "$CURSOR_DIR/skills" "$SYNC_DIR/skills"
+sync_cursor_to_repo "$CURSOR_DIR/rules" "$SYNC_DIR/roles"
+sync_cursor_to_repo "$CURSOR_DIR/subagent" "$SYNC_DIR/subagent"
+sync_cursor_to_repo "$CURSOR_DIR/hooks" "$SYNC_DIR/hooks"
 
 git -C "$SYNC_DIR" add -A
 
