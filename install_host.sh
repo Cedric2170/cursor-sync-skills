@@ -2,13 +2,11 @@
 set -euo pipefail
 
 # Installation du sync skills avec structure:
-# - Donnees skills sous ~/.skills-sync/skills/{skills,roles,subagent,hooks}
-# - Liens ~/.cursor/{skills,rules,subagent,hooks} vers ces chemins
-# - Scripts installes localement sous ~/.cursor/scripts (non versionnes)
+# - Donnees skills sous ~/.skills-sync/{skills,roles,subagent,hooks}
+# - Liens ~/.cursor/{skills,rules,subagent,hooks} -> ~/.skills-sync/{skills,roles,subagent,hooks}
 
 CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
-DATA_DIR="$SYNC_DIR/skills"
 SKILLS_BRANCH="${SKILLS_BRANCH:-main}"
 SKILLS_ORIGIN_URL="${SKILLS_ORIGIN_URL:-git@gitlab.com:point-digital/ia-skills/skills.git}"
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
@@ -35,7 +33,6 @@ purge_old_cursor_git() {
 ensure_sync_clone() {
   if [[ -d "$SYNC_DIR/.git" ]]; then
     SYNC_DIR="$(cd "$SYNC_DIR" && pwd)"
-    DATA_DIR="$SYNC_DIR/skills"
     return 0
   fi
   if [[ -e "$SYNC_DIR" ]]; then
@@ -44,67 +41,68 @@ ensure_sync_clone() {
   fi
   git clone "$SKILLS_ORIGIN_URL" "$SYNC_DIR"
   SYNC_DIR="$(cd "$SYNC_DIR" && pwd)"
-  DATA_DIR="$SYNC_DIR/skills"
 }
 
 ensure_target_tree() {
-  mkdir -p "$DATA_DIR/skills" "$DATA_DIR/roles" "$DATA_DIR/subagent" "$DATA_DIR/hooks"
+  mkdir -p "$SYNC_DIR/skills" "$SYNC_DIR/roles" "$SYNC_DIR/subagent" "$SYNC_DIR/hooks"
 }
 
-# Migration de layout: racine -> skills/*
-migrate_root_to_data_dir() {
-  local name src dst
-  for name in skills roles subagent hooks; do
-    src="$SYNC_DIR/$name"
-    dst="$DATA_DIR/$name"
-    if [[ -e "$src" && "$src" != "$dst" ]]; then
-      mkdir -p "$dst"
-      if [[ -d "$src" ]]; then
-        rsync -a "$src/" "$dst/"
-        rm -rf "$src"
-      else
-        mv "$src" "$dst"
-      fi
-      echo "install: migration depot: $name -> skills/$name"
+# Migration de layout: ancien skills/skills/* -> skills/*
+migrate_old_nested_layout() {
+  local nested="$SYNC_DIR/skills/skills"
+  if [[ -d "$nested" ]]; then
+    rsync -a "$nested/" "$SYNC_DIR/skills/"
+    rm -rf "$nested"
+    echo "install: migration depot: skills/skills/* -> skills/*"
+  fi
+  for name in roles subagent hooks; do
+    local old="$SYNC_DIR/skills/$name"
+    if [[ -d "$old" && -d "$SYNC_DIR/$name" ]]; then
+      rsync -a "$old/" "$SYNC_DIR/$name/"
+      rm -rf "$old"
+      echo "install: migration depot: skills/$name -> $name"
     fi
   done
 }
 
-copy_if_real_dir() {
+# Fusionne le contenu local dans le clone, puis pose un lien symbolique.
+# 1. Si host_dir est un vrai repertoire (pas un lien): rsync contenu -> sync_dir, puis rm -rf host_dir
+# 2. Si host_dir est deja un lien vers sync_dir: rien a faire
+# 3. Si host_dir est un lien vers ailleurs: le supprimer
+# 4. Creer le lien host_dir -> sync_dir
+link_cursor_dir() {
   local host_dir="$1"
   local sync_dir="$2"
   mkdir -p "$sync_dir"
-  if [[ -e "$host_dir" && ! -L "$host_dir" ]]; then
-    if [[ ! -d "$host_dir" ]]; then
-      echo "Erreur: $host_dir existe et n'est pas un repertoire."
-      exit 1
+
+  if [[ -L "$host_dir" ]]; then
+    local current_target
+    current_target="$(readlink "$host_dir")"
+    if [[ "$current_target" == "$sync_dir" ]]; then
+      echo "install: lien deja OK: $(printf '%q' "$host_dir") -> $(printf '%q' "$sync_dir")"
+      return 0
     fi
+    echo "install: ancien lien $(printf '%q' "$host_dir") -> $(printf '%q' "$current_target") (sera remplace)"
+    rm -f "$host_dir"
+  elif [[ -d "$host_dir" ]]; then
     rsync -a "$host_dir/" "$sync_dir/"
-    echo "install: copie vers clone: $(printf '%q' "$host_dir") -> $(printf '%q' "$sync_dir")"
+    echo "install: contenu local copie dans le clone: $(printf '%q' "$host_dir") -> $(printf '%q' "$sync_dir")"
+    rm -rf "$host_dir"
+  elif [[ -e "$host_dir" ]]; then
+    echo "Erreur: $host_dir existe et n'est pas un repertoire."
+    exit 1
   fi
+
+  ln -sfn "$sync_dir" "$host_dir"
+  echo "install: lien cree: $(printf '%q' "$host_dir") -> $(printf '%q' "$sync_dir")"
 }
 
-symlink_cursor_to_sync() {
-  local host_path="$1"
-  local sync_path="$2"
-  if [[ -e "$host_path" || -L "$host_path" ]]; then
-    rm -rf "$host_path"
-  fi
-  ln -sfn "$sync_path" "$host_path"
-  echo "install: lien: $(printf '%q' "$host_path") -> $(printf '%q' "$sync_path")"
-}
-
-install_symlinks() {
+install_links() {
   mkdir -p "$CURSOR_DIR"
-  copy_if_real_dir "$CURSOR_DIR/skills" "$DATA_DIR/skills"
-  copy_if_real_dir "$CURSOR_DIR/rules" "$DATA_DIR/roles"
-  copy_if_real_dir "$CURSOR_DIR/subagent" "$DATA_DIR/subagent"
-  copy_if_real_dir "$CURSOR_DIR/hooks" "$DATA_DIR/hooks"
-
-  symlink_cursor_to_sync "$CURSOR_DIR/skills" "$DATA_DIR/skills"
-  symlink_cursor_to_sync "$CURSOR_DIR/rules" "$DATA_DIR/roles"
-  symlink_cursor_to_sync "$CURSOR_DIR/subagent" "$DATA_DIR/subagent"
-  symlink_cursor_to_sync "$CURSOR_DIR/hooks" "$DATA_DIR/hooks"
+  link_cursor_dir "$CURSOR_DIR/skills" "$SYNC_DIR/skills"
+  link_cursor_dir "$CURSOR_DIR/rules" "$SYNC_DIR/roles"
+  link_cursor_dir "$CURSOR_DIR/subagent" "$SYNC_DIR/subagent"
+  link_cursor_dir "$CURSOR_DIR/hooks" "$SYNC_DIR/hooks"
 }
 
 install_scripts() {
@@ -122,7 +120,7 @@ pull_after_links() {
 }
 
 install_commit_and_push() {
-  git -C "$SYNC_DIR" add -A -- skills
+  git -C "$SYNC_DIR" add -A -- skills roles subagent hooks
   if ! git -C "$SYNC_DIR" diff --staged --quiet; then
     local host
     host="$(hostname -s 2>/dev/null || hostname)"
@@ -182,16 +180,15 @@ EOF
 purge_old_cursor_git
 ensure_sync_clone
 ensure_target_tree
-migrate_root_to_data_dir
-install_symlinks
-install_scripts
+migrate_old_nested_layout
 pull_after_links
+install_links
+install_scripts
 install_commit_and_push
 configure_shell_aliases
 
 echo "OK install: SYNC_DIR=$SYNC_DIR CURSOR_DIR=$CURSOR_DIR"
-echo "  ~/.cursor/skills -> ~/.skills-sync/skills/skills"
-echo "  ~/.cursor/rules  -> ~/.skills-sync/skills/roles"
-echo "  ~/.cursor/subagent -> ~/.skills-sync/skills/subagent"
-echo "  ~/.cursor/hooks -> ~/.skills-sync/skills/hooks"
-echo "  ~/.cursor/scripts (local, sans sync git)"
+echo "  ~/.cursor/skills   -> ~/.skills-sync/skills"
+echo "  ~/.cursor/rules    -> ~/.skills-sync/roles"
+echo "  ~/.cursor/subagent -> ~/.skills-sync/subagent"
+echo "  ~/.cursor/hooks    -> ~/.skills-sync/hooks"

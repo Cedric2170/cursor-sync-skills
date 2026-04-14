@@ -3,6 +3,7 @@ set -euo pipefail
 
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
 BRANCH="${SKILLS_BRANCH:-main}"
+CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
 
 if [[ ! -d "$SYNC_DIR/.git" ]]; then
   echo "Depot skills introuvable: $SYNC_DIR — lancez install_host.sh"
@@ -13,7 +14,20 @@ fi
 git -C "$SYNC_DIR" fetch origin
 git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"
 
-git -C "$SYNC_DIR" add -A -- skills
+# Fusion locale -> clone avant commit (sans --delete).
+sync_cursor_to_repo() {
+  local c="$1" s="$2"
+  if [[ -d "$c" ]]; then
+    mkdir -p "$s"
+    rsync -a "$c/" "$s/"
+  fi
+}
+sync_cursor_to_repo "$CURSOR_DIR/skills" "$SYNC_DIR/skills"
+sync_cursor_to_repo "$CURSOR_DIR/rules" "$SYNC_DIR/roles"
+sync_cursor_to_repo "$CURSOR_DIR/subagent" "$SYNC_DIR/subagent"
+sync_cursor_to_repo "$CURSOR_DIR/hooks" "$SYNC_DIR/hooks"
+
+git -C "$SYNC_DIR" add -A -- skills roles subagent hooks
 
 msg=""
 if ! git -C "$SYNC_DIR" diff --staged --quiet; then
