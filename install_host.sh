@@ -1,26 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installe pullskills/pushskills, clone ~/.skills-sync si besoin, et synchronise ~/.cursor.
-# Installation: fusion uniquement additive (rsync sans --delete) — rien n’est efface sous ~/.cursor.
-# Ensuite, pullskills / pushskills appliquent les mises a jour et suppressions (--delete par defaut).
-# CURSOR_SKILLS_RSYNC_NO_DELETE=1 sur pull/push pour ne jamais effacer cote ~/.cursor ou ~/.skills-sync.
-#   ./install_host.sh
-#
-#   SKILLS_ORIGIN_URL           defaut: git@gitlab.com:point-digital/ia-skills/skills.git
-#   CURSOR_SKILLS_SYNC_DIR      defaut: $HOME/.skills-sync
-#   SKILLS_BRANCH               defaut: main (pull en debut d’install si clone existant)
-#   CURSOR_DIR                  defaut: $HOME/.cursor
-#   CURSOR_PURGE_OLD_CURSOR_GIT=1   supprime ~/.cursor/.git sans autre confirmation
-#   SHELL_RC                    ex: ~/.bashrc
+# Installation du sync skills avec structure:
+# - Donnees skills sous ~/.skills-sync/skills/{skills,roles,subagent,hooks}
+# - Scripts sous ~/.skills-sync/scripts
+# - Liens ~/.cursor/* vers ces chemins
 
 CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
+DATA_DIR="$SYNC_DIR/skills"
+SCRIPTS_DIR="$SYNC_DIR/scripts"
 SKILLS_BRANCH="${SKILLS_BRANCH:-main}"
 SKILLS_ORIGIN_URL="${SKILLS_ORIGIN_URL:-git@gitlab.com:point-digital/ia-skills/skills.git}"
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 SELF_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd)"
-MIGRATION_DONE=0
 
 MARK_BEGIN="# >>> cursor-skills-sync >>>"
 MARK_END="# <<< cursor-skills-sync <<<"
@@ -43,6 +36,8 @@ purge_old_cursor_git() {
 ensure_sync_clone() {
   if [[ -d "$SYNC_DIR/.git" ]]; then
     SYNC_DIR="$(cd "$SYNC_DIR" && pwd)"
+    DATA_DIR="$SYNC_DIR/skills"
+    SCRIPTS_DIR="$SYNC_DIR/scripts"
     return 0
   fi
   if [[ -e "$SYNC_DIR" ]]; then
@@ -51,77 +46,107 @@ ensure_sync_clone() {
   fi
   git clone "$SKILLS_ORIGIN_URL" "$SYNC_DIR"
   SYNC_DIR="$(cd "$SYNC_DIR" && pwd)"
+  DATA_DIR="$SYNC_DIR/skills"
+  SCRIPTS_DIR="$SYNC_DIR/scripts"
 }
 
-ensure_skill_tree() {
-  mkdir -p "$SYNC_DIR/skills" "$SYNC_DIR/roles" "$SYNC_DIR/subagent" "$SYNC_DIR/hooks"
+ensure_target_tree() {
+  mkdir -p "$DATA_DIR/skills" "$DATA_DIR/roles" "$DATA_DIR/subagent" "$DATA_DIR/hooks" "$SCRIPTS_DIR"
 }
 
-# Met le clone a jour avant la fusion additive (sans rsync --delete sur ~/.cursor).
-pull_origin_before_merge() {
-  if [[ ! -d "$SYNC_DIR/.git" ]]; then
-    return 0
-  fi
-  if git -C "$SYNC_DIR" pull --rebase --autostash origin "$SKILLS_BRANCH"; then
-    echo "install: depot a jour (origin/$SKILLS_BRANCH)."
-  else
-    echo "Avertissement: git pull a echoue dans $SYNC_DIR — corrigez puis relancez install ou pullskills." >&2
-  fi
+# Migration de layout: racine -> skills/*
+migrate_root_to_data_dir() {
+  local name src dst
+  for name in skills roles subagent hooks; do
+    src="$SYNC_DIR/$name"
+    dst="$DATA_DIR/$name"
+    if [[ -e "$src" && "$src" != "$dst" ]]; then
+      mkdir -p "$dst"
+      if [[ -d "$src" ]]; then
+        rsync -a "$src/" "$dst/"
+        rm -rf "$src"
+      else
+        mv "$src" "$dst"
+      fi
+      echo "install: migration depot: $name -> skills/$name"
+    fi
+  done
 }
 
-# Fusionne ~/.cursor avec le clone Git, sans --delete (ajouts / mises a jour seulement).
-# host_dir: ex. ~/.cursor/skills ; sync_dir: ex. ~/.skills-sync/skills (rules <-> roles).
-install_cursor_merge() {
+copy_if_real_dir() {
   local host_dir="$1"
   local sync_dir="$2"
   mkdir -p "$sync_dir"
-  if [[ -e "$host_dir" ]]; then
+  if [[ -e "$host_dir" && ! -L "$host_dir" ]]; then
     if [[ ! -d "$host_dir" ]]; then
-      echo "Erreur: $host_dir existe et n'est pas un repertoire (ni lien vers repertoire)."
+      echo "Erreur: $host_dir existe et n'est pas un repertoire."
       exit 1
     fi
     rsync -a "$host_dir/" "$sync_dir/"
+    echo "install: copie vers clone: $(printf '%q' "$host_dir") -> $(printf '%q' "$sync_dir")"
   fi
-  if [[ -L "$host_dir" ]]; then
-    echo "Migration: $host_dir etait un lien — remplace par un repertoire (fusion avec $sync_dir)."
-    rm -f "$host_dir"
-    MIGRATION_DONE=1
-  fi
-  mkdir -p "$host_dir"
-  rsync -a "$sync_dir/" "$host_dir/"
 }
 
-install_links() {
+symlink_cursor_to_sync() {
+  local host_path="$1"
+  local sync_path="$2"
+  if [[ -e "$host_path" || -L "$host_path" ]]; then
+    rm -rf "$host_path"
+  fi
+  ln -sfn "$sync_path" "$host_path"
+  echo "install: lien: $(printf '%q' "$host_path") -> $(printf '%q' "$sync_path")"
+}
+
+install_symlinks() {
   mkdir -p "$CURSOR_DIR"
-  install_cursor_merge "$CURSOR_DIR/skills" "$SYNC_DIR/skills"
-  install_cursor_merge "$CURSOR_DIR/rules" "$SYNC_DIR/roles"
-  install_cursor_merge "$CURSOR_DIR/subagent" "$SYNC_DIR/subagent"
-  install_cursor_merge "$CURSOR_DIR/hooks" "$SYNC_DIR/hooks"
-}
+  copy_if_real_dir "$CURSOR_DIR/skills" "$DATA_DIR/skills"
+  copy_if_real_dir "$CURSOR_DIR/rules" "$DATA_DIR/roles"
+  copy_if_real_dir "$CURSOR_DIR/subagent" "$DATA_DIR/subagent"
+  copy_if_real_dir "$CURSOR_DIR/hooks" "$DATA_DIR/hooks"
+  copy_if_real_dir "$CURSOR_DIR/scripts" "$SCRIPTS_DIR"
 
-commit_migration_if_needed() {
-  if [[ "$MIGRATION_DONE" != "1" ]]; then
-    return 0
-  fi
-  if [[ ! -d "$SYNC_DIR/.git" ]]; then
-    return 0
-  fi
-  git -C "$SYNC_DIR" add -A
-  if git -C "$SYNC_DIR" diff --staged --quiet; then
-    echo "Migration: rien de nouveau a commiter (deja a jour)."
-    return 0
-  fi
-  local host
-  host="$(hostname -s 2>/dev/null || hostname)"
-  host="${host//[^a-zA-Z0-9._-]/_}"
-  git -C "$SYNC_DIR" commit -m "${host}-install_host-migration-locals"
-  echo "Migration enregistree dans Git (commit local). Envoyez avec: pushskills"
+  symlink_cursor_to_sync "$CURSOR_DIR/skills" "$DATA_DIR/skills"
+  symlink_cursor_to_sync "$CURSOR_DIR/rules" "$DATA_DIR/roles"
+  symlink_cursor_to_sync "$CURSOR_DIR/subagent" "$DATA_DIR/subagent"
+  symlink_cursor_to_sync "$CURSOR_DIR/hooks" "$DATA_DIR/hooks"
+  symlink_cursor_to_sync "$CURSOR_DIR/scripts" "$SCRIPTS_DIR"
 }
 
 install_scripts() {
-  mkdir -p "$CURSOR_DIR/scripts"
-  install -m 0755 "$SELF_DIR/pullskills" "$CURSOR_DIR/scripts/pullskills"
-  install -m 0755 "$SELF_DIR/pushskills" "$CURSOR_DIR/scripts/pushskills"
+  mkdir -p "$SCRIPTS_DIR"
+  install -m 0755 "$SELF_DIR/pullskills" "$SCRIPTS_DIR/pullskills"
+  install -m 0755 "$SELF_DIR/pushskills" "$SCRIPTS_DIR/pushskills"
+}
+
+pull_after_links() {
+  if git -C "$SYNC_DIR" pull --rebase --autostash origin "$SKILLS_BRANCH"; then
+    echo "install: git pull OK (origin/$SKILLS_BRANCH)."
+  else
+    echo "Avertissement: git pull a echoue dans $SYNC_DIR — resoudre puis pullskills." >&2
+  fi
+}
+
+install_commit_and_push() {
+  git -C "$SYNC_DIR" add -A -- skills scripts
+  if ! git -C "$SYNC_DIR" diff --staged --quiet; then
+    local host
+    host="$(hostname -s 2>/dev/null || hostname)"
+    host="${host//[^a-zA-Z0-9._-]/_}"
+    git -C "$SYNC_DIR" commit -m "${host}-install-layout-sync"
+    echo "install: commit cree (layout + fusion)."
+  else
+    echo "install: rien a commiter."
+  fi
+
+  if [[ "${CURSOR_INSTALL_SKIP_PUSH:-0}" == "1" ]]; then
+    echo "install: push ignore (CURSOR_INSTALL_SKIP_PUSH=1)."
+    return 0
+  fi
+  if git -C "$SYNC_DIR" push --progress origin "HEAD:${SKILLS_BRANCH}"; then
+    echo "install: git push OK."
+  else
+    echo "Avertissement: git push a echoue — essayez plus tard: pushskills" >&2
+  fi
 }
 
 configure_shell_aliases() {
@@ -148,43 +173,30 @@ configure_shell_aliases() {
   ' "$rc" > "$tmp"
   mv "$tmp" "$rc"
 
-  tmp="$(mktemp)"
-  awk '
-    # Anciens alias (avec espaces possibles) + fautes de frappe ; re-ajoutes dans le bloc marque.
-    /^[[:space:]]*alias[[:space:]]+pullskills=/ { next }
-    /^[[:space:]]*alias[[:space:]]+pushskills=/ { next }
-    /^[[:space:]]*alias[[:space:]]+pullscript=/ { next }
-    /^[[:space:]]*alias[[:space:]]+pushskiil=/ { next }
-    # Ancien depot ~/.cursor : scripts nommes pullscripts-*/pushscripts-*
-    /^[[:space:]]*alias[[:space:]]+pullscripts-master=/ { next }
-    /^[[:space:]]*alias[[:space:]]+pushscripts-master=/ { next }
-    /^[[:space:]]*alias[[:space:]]+pullscripts-slave=/ { next }
-    /^[[:space:]]*alias[[:space:]]+pushscripts-slave=/ { next }
-    # Tout alias qui pointe encore vers ces fichiers (ex. pullskills -> pushscripts-master)
-    /^[[:space:]]*alias[[:space:]]+/ && $0 ~ /\/\.cursor\/scripts\/(push|pull)scripts-(master|slave)/ { next }
-    { print }
-  ' "$rc" > "$tmp"
-  mv "$tmp" "$rc"
-
   cat >> "$rc" <<EOF
 $MARK_BEGIN
 alias pullskills="\$HOME/.cursor/scripts/pullskills"
 alias pushskills="\$HOME/.cursor/scripts/pushskills"
 $MARK_END
 EOF
+
   echo "Shell mis a jour: $rc"
   echo "  Ouvrez un nouveau terminal ou: source $(printf '%q' "$rc")"
-  echo "  (les alias pullskills/pushskills en memoire pointaient peut-etre encore vers pushscripts-master.)"
 }
 
-install_scripts
 purge_old_cursor_git
 ensure_sync_clone
-ensure_skill_tree
-pull_origin_before_merge
-install_links
-commit_migration_if_needed
+ensure_target_tree
+migrate_root_to_data_dir
+install_symlinks
+install_scripts
+pull_after_links
+install_commit_and_push
 configure_shell_aliases
 
 echo "OK install: SYNC_DIR=$SYNC_DIR CURSOR_DIR=$CURSOR_DIR"
-echo "  Suite: pullskills pour aligner ~/.cursor sur le depôt (y compris suppressions); pushskills pour publier."
+echo "  ~/.cursor/skills -> ~/.skills-sync/skills/skills"
+echo "  ~/.cursor/rules  -> ~/.skills-sync/skills/roles"
+echo "  ~/.cursor/subagent -> ~/.skills-sync/skills/subagent"
+echo "  ~/.cursor/hooks -> ~/.skills-sync/skills/hooks"
+echo "  ~/.cursor/scripts -> ~/.skills-sync/scripts"

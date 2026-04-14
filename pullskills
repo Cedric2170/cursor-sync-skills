@@ -3,13 +3,6 @@ set -euo pipefail
 
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
 BRANCH="${SKILLS_BRANCH:-main}"
-CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
-# Par defaut: rsync --delete pour que les suppressions Git se reflètent dans ~/.cursor/{skills,rules,...}.
-# Mettre CURSOR_SKILLS_RSYNC_NO_DELETE=1 pour l’ancien comportement (conserver les fichiers absents du dépôt).
-RSYNC_EXTRA=()
-if [[ "${CURSOR_SKILLS_RSYNC_NO_DELETE:-0}" != "1" ]]; then
-  RSYNC_EXTRA=(--delete)
-fi
 
 if [[ ! -d "$SYNC_DIR/.git" ]]; then
   echo "Depot skills introuvable: $SYNC_DIR — lancez install_host.sh"
@@ -19,17 +12,4 @@ fi
 git -C "$SYNC_DIR" fetch origin
 git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"
 
-# Depuis le depot vers ~/.cursor (avec --delete sauf si CURSOR_SKILLS_RSYNC_NO_DELETE=1)
-sync_repo_to_cursor() {
-  local s="$1" c="$2"
-  if [[ -d "$s" ]]; then
-    mkdir -p "$c"
-    rsync -a "${RSYNC_EXTRA[@]}" "$s/" "$c/"
-  fi
-}
-sync_repo_to_cursor "$SYNC_DIR/skills" "$CURSOR_DIR/skills"
-sync_repo_to_cursor "$SYNC_DIR/roles" "$CURSOR_DIR/rules"
-sync_repo_to_cursor "$SYNC_DIR/subagent" "$CURSOR_DIR/subagent"
-sync_repo_to_cursor "$SYNC_DIR/hooks" "$CURSOR_DIR/hooks"
-
-echo "pullskills OK ($BRANCH)"
+echo "pullskills OK ($BRANCH) — HEAD $(git -C "$SYNC_DIR" rev-parse --short HEAD)."
