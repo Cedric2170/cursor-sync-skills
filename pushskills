@@ -13,7 +13,7 @@ fi
 git -C "$SYNC_DIR" fetch origin
 git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"
 
-git -C "$SYNC_DIR" add -A -- skills scripts
+git -C "$SYNC_DIR" add -A -- skills
 
 msg=""
 if ! git -C "$SYNC_DIR" diff --staged --quiet; then

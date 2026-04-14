@@ -3,13 +3,12 @@ set -euo pipefail
 
 # Installation du sync skills avec structure:
 # - Donnees skills sous ~/.skills-sync/skills/{skills,roles,subagent,hooks}
-# - Scripts sous ~/.skills-sync/scripts
-# - Liens ~/.cursor/* vers ces chemins
+# - Liens ~/.cursor/{skills,rules,subagent,hooks} vers ces chemins
+# - Scripts installes localement sous ~/.cursor/scripts (non versionnes)
 
 CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
 DATA_DIR="$SYNC_DIR/skills"
-SCRIPTS_DIR="$SYNC_DIR/scripts"
 SKILLS_BRANCH="${SKILLS_BRANCH:-main}"
 SKILLS_ORIGIN_URL="${SKILLS_ORIGIN_URL:-git@gitlab.com:point-digital/ia-skills/skills.git}"
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
@@ -37,7 +36,6 @@ ensure_sync_clone() {
   if [[ -d "$SYNC_DIR/.git" ]]; then
     SYNC_DIR="$(cd "$SYNC_DIR" && pwd)"
     DATA_DIR="$SYNC_DIR/skills"
-    SCRIPTS_DIR="$SYNC_DIR/scripts"
     return 0
   fi
   if [[ -e "$SYNC_DIR" ]]; then
@@ -47,11 +45,10 @@ ensure_sync_clone() {
   git clone "$SKILLS_ORIGIN_URL" "$SYNC_DIR"
   SYNC_DIR="$(cd "$SYNC_DIR" && pwd)"
   DATA_DIR="$SYNC_DIR/skills"
-  SCRIPTS_DIR="$SYNC_DIR/scripts"
 }
 
 ensure_target_tree() {
-  mkdir -p "$DATA_DIR/skills" "$DATA_DIR/roles" "$DATA_DIR/subagent" "$DATA_DIR/hooks" "$SCRIPTS_DIR"
+  mkdir -p "$DATA_DIR/skills" "$DATA_DIR/roles" "$DATA_DIR/subagent" "$DATA_DIR/hooks"
 }
 
 # Migration de layout: racine -> skills/*
@@ -103,19 +100,17 @@ install_symlinks() {
   copy_if_real_dir "$CURSOR_DIR/rules" "$DATA_DIR/roles"
   copy_if_real_dir "$CURSOR_DIR/subagent" "$DATA_DIR/subagent"
   copy_if_real_dir "$CURSOR_DIR/hooks" "$DATA_DIR/hooks"
-  copy_if_real_dir "$CURSOR_DIR/scripts" "$SCRIPTS_DIR"
 
   symlink_cursor_to_sync "$CURSOR_DIR/skills" "$DATA_DIR/skills"
   symlink_cursor_to_sync "$CURSOR_DIR/rules" "$DATA_DIR/roles"
   symlink_cursor_to_sync "$CURSOR_DIR/subagent" "$DATA_DIR/subagent"
   symlink_cursor_to_sync "$CURSOR_DIR/hooks" "$DATA_DIR/hooks"
-  symlink_cursor_to_sync "$CURSOR_DIR/scripts" "$SCRIPTS_DIR"
 }
 
 install_scripts() {
-  mkdir -p "$SCRIPTS_DIR"
-  install -m 0755 "$SELF_DIR/pullskills" "$SCRIPTS_DIR/pullskills"
-  install -m 0755 "$SELF_DIR/pushskills" "$SCRIPTS_DIR/pushskills"
+  mkdir -p "$CURSOR_DIR/scripts"
+  install -m 0755 "$SELF_DIR/pullskills" "$CURSOR_DIR/scripts/pullskills"
+  install -m 0755 "$SELF_DIR/pushskills" "$CURSOR_DIR/scripts/pushskills"
 }
 
 pull_after_links() {
@@ -127,7 +122,7 @@ pull_after_links() {
 }
 
 install_commit_and_push() {
-  git -C "$SYNC_DIR" add -A -- skills scripts
+  git -C "$SYNC_DIR" add -A -- skills
   if ! git -C "$SYNC_DIR" diff --staged --quiet; then
     local host
     host="$(hostname -s 2>/dev/null || hostname)"
@@ -199,4 +194,4 @@ echo "  ~/.cursor/skills -> ~/.skills-sync/skills/skills"
 echo "  ~/.cursor/rules  -> ~/.skills-sync/skills/roles"
 echo "  ~/.cursor/subagent -> ~/.skills-sync/skills/subagent"
 echo "  ~/.cursor/hooks -> ~/.skills-sync/skills/hooks"
-echo "  ~/.cursor/scripts -> ~/.skills-sync/scripts"
+echo "  ~/.cursor/scripts (local, sans sync git)"
