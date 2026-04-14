@@ -9,6 +9,10 @@ if [[ ! -d "$SYNC_DIR/.git" ]]; then
   exit 1
 fi
 
+# Integrer d abord le remote pour eviter les rejets non-fast-forward.
+git -C "$SYNC_DIR" fetch origin
+git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"
+
 git -C "$SYNC_DIR" add -A -- skills scripts
 
 msg=""
@@ -24,7 +28,13 @@ origin_url="$(git -C "$SYNC_DIR" remote get-url origin 2>/dev/null || echo "orig
 
 echo "pushskills: envoi git vers origin/${BRANCH} (HEAD ${head_short})..."
 echo "  distant: ${origin_url}"
-git -C "$SYNC_DIR" push --progress origin "HEAD:${BRANCH}"
+
+# Retry unique en cas de concurrence entre pull et push.
+if ! git -C "$SYNC_DIR" push --progress origin "HEAD:${BRANCH}"; then
+  echo "pushskills: push rejete, tentative auto: pull --rebase puis re-push..." >&2
+  git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"
+  git -C "$SYNC_DIR" push --progress origin "HEAD:${BRANCH}"
+fi
 
 if [[ -n "$msg" ]]; then
   echo "pushskills OK — commit cree et pousse: ${msg} (branche ${BRANCH}, ${head_short})."
