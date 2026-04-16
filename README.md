@@ -107,13 +107,6 @@ Si l'installation echoue:
 
 ---
 
-## Note sur `rsync`
-
-Les commandes quotidiennes `pullskills` et `pushskills` sont en mode
-**symlink-only** et n'utilisent pas `rsync`.
-
----
-
 ## Auteur
 
 Baertschi Cedric - [github.com/Cedric2170](https://github.com/Cedric2170/)
