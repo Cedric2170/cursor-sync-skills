@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installation du sync skills avec structure:
-# - Donnees skills sous ~/.skills-sync/{skills,roles,subagent,hooks}
+# Installation du sync skills avec la structure suivante:
+# - Donnees sous ~/.skills-sync/{skills,roles,subagent,hooks}
 # - Liens ~/.cursor/{skills,rules,subagent,hooks} -> ~/.skills-sync/{skills,roles,subagent,hooks}
 
 CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
@@ -65,11 +65,11 @@ migrate_old_nested_layout() {
   done
 }
 
-# Fusionne le contenu local dans le clone, puis pose un lien symbolique.
-# 1. Si host_dir est un vrai repertoire (pas un lien): rsync contenu -> sync_dir, puis rm -rf host_dir
-# 2. Si host_dir est deja un lien vers sync_dir: rien a faire
-# 3. Si host_dir est un lien vers ailleurs: le supprimer
-# 4. Creer le lien host_dir -> sync_dir
+# Fusionne le contenu local dans le clone, puis cree le lien symbolique.
+# 1. Si host_dir est un repertoire (pas un lien): rsync contenu -> sync_dir, puis rm -rf host_dir.
+# 2. Si host_dir est deja un lien vers sync_dir: rien a faire.
+# 3. Si host_dir est un lien vers ailleurs: supprimer le lien.
+# 4. Creer le lien host_dir -> sync_dir.
 link_cursor_dir() {
   local host_dir="$1"
   local sync_dir="$2"
@@ -111,7 +111,7 @@ install_scripts() {
   install -m 0755 "$SELF_DIR/pushskills" "$CURSOR_DIR/scripts/pushskills"
 }
 
-pull_after_links() {
+pull_before_links() {
   if git -C "$SYNC_DIR" pull --rebase --autostash origin "$SKILLS_BRANCH"; then
     echo "install: git pull OK (origin/$SKILLS_BRANCH)."
   else
@@ -181,7 +181,7 @@ purge_old_cursor_git
 ensure_sync_clone
 ensure_target_tree
 migrate_old_nested_layout
-pull_after_links
+pull_before_links
 install_links
 install_scripts
 install_commit_and_push

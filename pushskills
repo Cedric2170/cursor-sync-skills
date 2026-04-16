@@ -10,22 +10,39 @@ if [[ ! -d "$SYNC_DIR/.git" ]]; then
   exit 1
 fi
 
+check_symlink() {
+  local link_path="$1"
+  local expected_target="$2"
+
+  if [[ ! -L "$link_path" ]]; then
+    echo "Erreur: lien manquant ou invalide: $link_path"
+    echo "Attendu: $link_path -> $expected_target"
+    echo "Relancez install_host.sh pour reparer."
+    exit 1
+  fi
+
+  local current_target
+  current_target="$(readlink "$link_path")"
+  if [[ "$current_target" != "$expected_target" ]]; then
+    echo "Erreur: lien incorrect: $link_path -> $current_target"
+    echo "Attendu: $link_path -> $expected_target"
+    echo "Relancez install_host.sh pour reparer."
+    exit 1
+  fi
+}
+
+# Verifie que le mode symlink-only est bien en place.
+check_symlink "$CURSOR_DIR/skills" "$SYNC_DIR/skills"
+check_symlink "$CURSOR_DIR/rules" "$SYNC_DIR/roles"
+check_symlink "$CURSOR_DIR/subagent" "$SYNC_DIR/subagent"
+check_symlink "$CURSOR_DIR/hooks" "$SYNC_DIR/hooks"
+
 # Integrer d abord le remote pour eviter les rejets non-fast-forward.
 git -C "$SYNC_DIR" fetch origin
 git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"
 
-# Fusion locale -> clone avant commit (sans --delete).
-sync_cursor_to_repo() {
-  local c="$1" s="$2"
-  if [[ -d "$c" ]]; then
-    mkdir -p "$s"
-    rsync -a "$c/" "$s/"
-  fi
-}
-sync_cursor_to_repo "$CURSOR_DIR/skills" "$SYNC_DIR/skills"
-sync_cursor_to_repo "$CURSOR_DIR/rules" "$SYNC_DIR/roles"
-sync_cursor_to_repo "$CURSOR_DIR/subagent" "$SYNC_DIR/subagent"
-sync_cursor_to_repo "$CURSOR_DIR/hooks" "$SYNC_DIR/hooks"
+# Mode symlink-only: les changements faits sous ~/.cursor/* sont
+# directement visibles dans $SYNC_DIR via les liens symboliques.
 
 git -C "$SYNC_DIR" add -A -- skills roles subagent hooks
 
@@ -43,7 +60,7 @@ origin_url="$(git -C "$SYNC_DIR" remote get-url origin 2>/dev/null || echo "orig
 echo "pushskills: envoi git vers origin/${BRANCH} (HEAD ${head_short})..."
 echo "  distant: ${origin_url}"
 
-# Retry unique en cas de concurrence entre pull et push.
+# Tentative unique en cas de concurrence entre pull et push.
 if ! git -C "$SYNC_DIR" push --progress origin "HEAD:${BRANCH}"; then
   echo "pushskills: push rejete, tentative auto: pull --rebase puis re-push..." >&2
   git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"

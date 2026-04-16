@@ -10,20 +10,39 @@ if [[ ! -d "$SYNC_DIR/.git" ]]; then
   exit 1
 fi
 
+check_symlink() {
+  local link_path="$1"
+  local expected_target="$2"
+
+  if [[ ! -L "$link_path" ]]; then
+    echo "Erreur: lien manquant ou invalide: $link_path"
+    echo "Attendu: $link_path -> $expected_target"
+    echo "Relancez install_host.sh pour reparer."
+    exit 1
+  fi
+
+  local current_target
+  current_target="$(readlink "$link_path")"
+  if [[ "$current_target" != "$expected_target" ]]; then
+    echo "Erreur: lien incorrect: $link_path -> $current_target"
+    echo "Attendu: $link_path -> $expected_target"
+    echo "Relancez install_host.sh pour reparer."
+    exit 1
+  fi
+}
+
+# Verifie que le mode symlink-only est bien en place.
+check_symlink "$CURSOR_DIR/skills" "$SYNC_DIR/skills"
+check_symlink "$CURSOR_DIR/rules" "$SYNC_DIR/roles"
+check_symlink "$CURSOR_DIR/subagent" "$SYNC_DIR/subagent"
+check_symlink "$CURSOR_DIR/hooks" "$SYNC_DIR/hooks"
+
+# Met a jour le clone local depuis origin.
 git -C "$SYNC_DIR" fetch origin
 git -C "$SYNC_DIR" pull --rebase --autostash origin "$BRANCH"
 
-# Fusion clone -> local apres pull (sans --delete).
-sync_repo_to_cursor() {
-  local s="$1" c="$2"
-  if [[ -d "$s" ]]; then
-    mkdir -p "$c"
-    rsync -a "$s/" "$c/"
-  fi
-}
-sync_repo_to_cursor "$SYNC_DIR/skills" "$CURSOR_DIR/skills"
-sync_repo_to_cursor "$SYNC_DIR/roles" "$CURSOR_DIR/rules"
-sync_repo_to_cursor "$SYNC_DIR/subagent" "$CURSOR_DIR/subagent"
-sync_repo_to_cursor "$SYNC_DIR/hooks" "$CURSOR_DIR/hooks"
+# Mode symlink-only: ~/.cursor/{skills,rules,subagent,hooks}
+# doivent etre des liens vers $SYNC_DIR/{skills,roles,subagent,hooks}.
+# Aucun rsync local n'est effectue ici.
 
 echo "pullskills OK ($BRANCH) — HEAD $(git -C "$SYNC_DIR" rev-parse --short HEAD)."
