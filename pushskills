@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SELF_PATH="${BASH_SOURCE[0]:-$0}"
+SELF_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd)"
+ENV_FILE_PATH="${ENV_FILE:-$SELF_DIR/.env}"
+if [[ -f "$ENV_FILE_PATH" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE_PATH"
+  set +a
+fi
+
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
 BRANCH="${SKILLS_BRANCH:-main}"
 CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"

@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SELF_PATH="${BASH_SOURCE[0]:-$0}"
+SELF_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd)"
+ENV_FILE_PATH="${ENV_FILE:-$SELF_DIR/.env}"
+if [[ -f "$ENV_FILE_PATH" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE_PATH"
+  set +a
+fi
+
 # Installation du sync skills avec la structure suivante:
 # - Donnees sous ~/.skills-sync/{skills,roles,subagent,hooks}
 # - Liens ~/.cursor/{skills,rules,subagent,hooks} -> ~/.skills-sync/{skills,roles,subagent,hooks}
@@ -8,9 +18,7 @@ set -euo pipefail
 CURSOR_DIR="${CURSOR_DIR:-$HOME/.cursor}"
 SYNC_DIR="${CURSOR_SKILLS_SYNC_DIR:-$HOME/.skills-sync}"
 SKILLS_BRANCH="${SKILLS_BRANCH:-main}"
-SKILLS_ORIGIN_URL="${SKILLS_ORIGIN_URL:-git@gitlab.com:point-digital/ia-skills/skills.git}"
-SELF_PATH="${BASH_SOURCE[0]:-$0}"
-SELF_DIR="$(cd "$(dirname "$SELF_PATH")" && pwd)"
+SKILLS_ORIGIN_URL="${SKILLS_ORIGIN_URL}"
 
 MARK_BEGIN="# >>> cursor-skills-sync >>>"
 MARK_END="# <<< cursor-skills-sync <<<"
